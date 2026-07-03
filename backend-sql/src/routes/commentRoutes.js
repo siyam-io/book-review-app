@@ -5,17 +5,22 @@ import crypto from "crypto";
 
 const router = express.Router();
 
-// Get comments using raw SQL
+// Get comments using Prisma Client
 router.get("/:bookId", protectRoute, async (req, res) => {
   try {
-    const comments = await prisma.$queryRawUnsafe(
-      `SELECT c.*, u.id as user_id, u.username as user_username, u.profileImage as user_profileImage
-       FROM "Comment" c
-       JOIN "User" u ON c.userId = u.id
-       WHERE c.bookId = ?
-       ORDER BY c.createdAt ASC`,
-      req.params.bookId
-    );
+    const comments = await prisma.comment.findMany({
+      where: { bookId: req.params.bookId },
+      orderBy: { createdAt: "asc" },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            profileImage: true
+          }
+        }
+      }
+    });
 
     const formattedComments = comments.map(c => ({
       id: c.id,
@@ -26,10 +31,10 @@ router.get("/:bookId", protectRoute, async (req, res) => {
       createdAt: c.createdAt,
       updatedAt: c.updatedAt,
       user: {
-        id: c.user_id,
-        _id: c.user_id,
-        username: c.user_username,
-        profileImage: c.user_profileImage
+        id: c.user.id,
+        _id: c.user.id,
+        username: c.user.username,
+        profileImage: c.user.profileImage
       }
     }));
 
@@ -40,7 +45,7 @@ router.get("/:bookId", protectRoute, async (req, res) => {
   }
 });
 
-// Add comment using raw SQL
+// Add comment using Prisma Client
 router.post("/:bookId", protectRoute, async (req, res) => {
   try {
     const { text } = req.body;
@@ -52,33 +57,39 @@ router.post("/:bookId", protectRoute, async (req, res) => {
     const createdAt = new Date();
     const updatedAt = createdAt;
 
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO "Comment" (id, text, userId, bookId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)`,
-      commentId, text, req.user.id, req.params.bookId, createdAt, updatedAt
-    );
-
-    const commentRows = await prisma.$queryRawUnsafe(
-      `SELECT c.*, u.id as user_id, u.username as user_username, u.profileImage as user_profileImage
-       FROM "Comment" c
-       JOIN "User" u ON c.userId = u.id
-       WHERE c.id = ?`,
-      commentId
-    );
-    const comment = commentRows[0];
+    const newComment = await prisma.comment.create({
+      data: {
+        id: commentId,
+        text,
+        userId: req.user.id,
+        bookId: req.params.bookId,
+        createdAt,
+        updatedAt
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            profileImage: true
+          }
+        }
+      }
+    });
 
     res.status(201).json({
-      id: comment.id,
-      _id: comment.id,
-      text: comment.text,
-      userId: comment.userId,
-      bookId: comment.bookId,
-      createdAt: comment.createdAt,
-      updatedAt: comment.updatedAt,
+      id: newComment.id,
+      _id: newComment.id,
+      text: newComment.text,
+      userId: newComment.userId,
+      bookId: newComment.bookId,
+      createdAt: newComment.createdAt,
+      updatedAt: newComment.updatedAt,
       user: {
-        id: comment.user_id,
-        _id: comment.user_id,
-        username: comment.user_username,
-        profileImage: comment.user_profileImage
+        id: newComment.user.id,
+        _id: newComment.user.id,
+        username: newComment.user.username,
+        profileImage: newComment.user.profileImage
       }
     });
   } catch (error) {

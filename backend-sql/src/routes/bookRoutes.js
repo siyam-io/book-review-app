@@ -10,24 +10,27 @@ const router = express.Router();
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// Helper to get book by ID using raw SQL
+// Helper to get book by ID using Prisma Client
 const getBookByIdRaw = async (bookId) => {
-  const bookRows = await prisma.$queryRawUnsafe(
-    `SELECT b.*, u.id as user_id, u.username as user_username, u.profileImage as user_profileImage
-     FROM "Book" b
-     JOIN "User" u ON b.userId = u.id
-     WHERE b.id = ?`,
-    bookId
-  );
-  if (!bookRows || bookRows.length === 0) return null;
-  const book = bookRows[0];
+  const book = await prisma.book.findUnique({
+    where: { id: bookId },
+    include: {
+      user: {
+        select: {
+          id: true,
+          username: true,
+          profileImage: true
+        }
+      },
+      likes: {
+        select: {
+          userId: true
+        }
+      }
+    }
+  });
+  if (!book) return null;
 
-  // Get likes
-  const likeRows = await prisma.$queryRawUnsafe(
-    `SELECT userId FROM "Like" WHERE bookId = ?`,
-    bookId
-  );
-  
   return {
     id: book.id,
     _id: book.id,
@@ -40,12 +43,12 @@ const getBookByIdRaw = async (bookId) => {
     updatedAt: book.updatedAt,
     userId: book.userId,
     user: {
-      id: book.user_id,
-      _id: book.user_id,
-      username: book.user_username,
-      profileImage: book.user_profileImage
+      id: book.user.id,
+      _id: book.user.id,
+      username: book.user.username,
+      profileImage: book.user.profileImage
     },
-    likes: likeRows.map(row => row.userId)
+    likes: book.likes.map(like => like.userId)
   };
 };
 
@@ -75,10 +78,19 @@ router.post("/", protectRoute, upload.single("image"), async (req, res) => {
     if (process.env.CLOUDINARY_CLOUD_NAME === "dummy" || !process.env.CLOUDINARY_CLOUD_NAME) {
       const base64Image = `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
       
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO "Book" (id, title, caption, details, rating, image, userId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        id, title, caption, details, Number(rating), base64Image, req.user.id, createdAt, updatedAt
-      );
+      await prisma.book.create({
+        data: {
+          id,
+          title,
+          caption,
+          details,
+          rating: Number(rating),
+          image: base64Image,
+          userId: req.user.id,
+          createdAt,
+          updatedAt
+        }
+      });
 
       const dbBook = await getBookByIdRaw(id);
       return res.status(201).json(dbBook);
@@ -90,10 +102,19 @@ router.post("/", protectRoute, upload.single("image"), async (req, res) => {
       async (error, result) => {
         if (error) return res.status(500).json({ message: error.message });
 
-        await prisma.$executeRawUnsafe(
-          `INSERT INTO "Book" (id, title, caption, details, rating, image, userId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          id, title, caption, details, Number(rating), result.secure_url, req.user.id, createdAt, updatedAt
-        );
+        await prisma.book.create({
+          data: {
+            id,
+            title,
+            caption,
+            details,
+            rating: Number(rating),
+            image: result.secure_url,
+            userId: req.user.id,
+            createdAt,
+            updatedAt
+          }
+        });
 
         const dbBook = await getBookByIdRaw(id);
         res.status(201).json(dbBook);
@@ -113,53 +134,47 @@ router.get("/", protectRoute, async (req, res) => {
     const limit = Number(req.query.limit) || 5;
     const skip = (page - 1) * limit;
 
-    const books = await prisma.$queryRawUnsafe(
-      `SELECT b.*, u.id as user_id, u.username as user_username, u.profileImage as user_profileImage
-       FROM "Book" b
-       JOIN "User" u ON b.userId = u.id
-       ORDER BY b.createdAt DESC
-       LIMIT ? OFFSET ?`,
-      limit, skip
-    );
+    const books = await prisma.book.findMany({
+      orderBy: { createdAt: "desc" },
+      skip,
+      take: limit,
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            profileImage: true
+          }
+        },
+        likes: {
+          select: {
+            userId: true
+          }
+        }
+      }
+    });
 
-    const totalBooksCount = await prisma.$queryRawUnsafe(
-      `SELECT COUNT(*) as count FROM "Book"`
-    );
-    const totalBooks = Number(totalBooksCount[0].count);
+    const totalBooks = await prisma.book.count();
 
-    // Fetch likes for these books using raw SQL
-    const bookIds = books.map(b => b.id);
-    let booksWithLikes = [];
-    if (bookIds.length > 0) {
-      const placeholders = bookIds.map(() => '?').join(',');
-      const likeRows = await prisma.$queryRawUnsafe(
-        `SELECT userId, bookId FROM "Like" WHERE bookId IN (${placeholders})`,
-        ...bookIds
-      );
-      
-      booksWithLikes = books.map(book => {
-        const bookLikes = likeRows.filter(l => l.bookId === book.id).map(l => l.userId);
-        return {
-          id: book.id,
-          _id: book.id,
-          title: book.title,
-          caption: book.caption,
-          details: book.details,
-          rating: book.rating,
-          image: book.image,
-          createdAt: book.createdAt,
-          updatedAt: book.updatedAt,
-          userId: book.userId,
-          user: {
-            id: book.user_id,
-            _id: book.user_id,
-            username: book.user_username,
-            profileImage: book.user_profileImage
-          },
-          likes: bookLikes
-        };
-      });
-    }
+    const booksWithLikes = books.map(book => ({
+      id: book.id,
+      _id: book.id,
+      title: book.title,
+      caption: book.caption,
+      details: book.details,
+      rating: book.rating,
+      image: book.image,
+      createdAt: book.createdAt,
+      updatedAt: book.updatedAt,
+      userId: book.userId,
+      user: {
+        id: book.user.id,
+        _id: book.user.id,
+        username: book.user.username,
+        profileImage: book.user.profileImage
+      },
+      likes: book.likes.map(like => like.userId)
+    }));
 
     res.send({
       books: booksWithLikes,
@@ -176,47 +191,45 @@ router.get("/", protectRoute, async (req, res) => {
 // get recommended books by the logged in user
 router.get("/user", protectRoute, async (req, res) => {
   try {
-    const books = await prisma.$queryRawUnsafe(
-      `SELECT b.*, u.id as user_id, u.username as user_username, u.profileImage as user_profileImage
-       FROM "Book" b
-       JOIN "User" u ON b.userId = u.id
-       WHERE b.userId = ?
-       ORDER BY b.createdAt DESC`,
-      req.user.id
-    );
+    const books = await prisma.book.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            profileImage: true
+          }
+        },
+        likes: {
+          select: {
+            userId: true
+          }
+        }
+      }
+    });
 
-    const bookIds = books.map(b => b.id);
-    let booksWithLikes = [];
-    if (bookIds.length > 0) {
-      const placeholders = bookIds.map(() => '?').join(',');
-      const likeRows = await prisma.$queryRawUnsafe(
-        `SELECT userId, bookId FROM "Like" WHERE bookId IN (${placeholders})`,
-        ...bookIds
-      );
-      
-      booksWithLikes = books.map(book => {
-        const bookLikes = likeRows.filter(l => l.bookId === book.id).map(l => l.userId);
-        return {
-          id: book.id,
-          _id: book.id,
-          title: book.title,
-          caption: book.caption,
-          details: book.details,
-          rating: book.rating,
-          image: book.image,
-          createdAt: book.createdAt,
-          updatedAt: book.updatedAt,
-          userId: book.userId,
-          user: {
-            id: book.user_id,
-            _id: book.user_id,
-            username: book.user_username,
-            profileImage: book.user_profileImage
-          },
-          likes: bookLikes
-        };
-      });
-    }
+    const booksWithLikes = books.map(book => ({
+      id: book.id,
+      _id: book.id,
+      title: book.title,
+      caption: book.caption,
+      details: book.details,
+      rating: book.rating,
+      image: book.image,
+      createdAt: book.createdAt,
+      updatedAt: book.updatedAt,
+      userId: book.userId,
+      user: {
+        id: book.user.id,
+        _id: book.user.id,
+        username: book.user.username,
+        profileImage: book.user.profileImage
+      },
+      likes: book.likes.map(like => like.userId)
+    }));
+
     res.json(booksWithLikes);
   } catch (error) {
     console.error("Get user books error:", error.message);
@@ -224,7 +237,7 @@ router.get("/user", protectRoute, async (req, res) => {
   }
 });
 
-// get single book by ID using raw SQL
+// get single book by ID
 router.get("/:id", protectRoute, async (req, res) => {
   try {
     const book = await getBookByIdRaw(req.params.id);
@@ -240,11 +253,9 @@ router.get("/:id", protectRoute, async (req, res) => {
 
 router.delete("/:id", protectRoute, async (req, res) => {
   try {
-    const bookRows = await prisma.$queryRawUnsafe(
-      `SELECT * FROM "Book" WHERE id = ?`,
-      req.params.id
-    );
-    const book = bookRows[0];
+    const book = await prisma.book.findUnique({
+      where: { id: req.params.id }
+    });
     
     if (!book) return res.status(404).json({ message: "Book not found" });
 
@@ -261,10 +272,9 @@ router.delete("/:id", protectRoute, async (req, res) => {
       }
     }
 
-    await prisma.$executeRawUnsafe(
-      `DELETE FROM "Book" WHERE id = ?`,
-      req.params.id
-    );
+    await prisma.book.delete({
+      where: { id: req.params.id }
+    });
 
     res.json({ message: "Book deleted successfully" });
   } catch (error) {
@@ -278,11 +288,9 @@ router.put("/:id", protectRoute, upload.single("image"), async (req, res) => {
     const { title, caption, rating, details } = req.body;
     const file = req.file;
 
-    const bookRows = await prisma.$queryRawUnsafe(
-      `SELECT * FROM "Book" WHERE id = ?`,
-      req.params.id
-    );
-    const book = bookRows[0];
+    const book = await prisma.book.findUnique({
+      where: { id: req.params.id }
+    });
     
     if (!book) return res.status(404).json({ message: "Book not found" });
 
@@ -300,10 +308,17 @@ router.put("/:id", protectRoute, upload.single("image"), async (req, res) => {
       if (process.env.CLOUDINARY_CLOUD_NAME === "dummy" || !process.env.CLOUDINARY_CLOUD_NAME) {
         const base64Image = `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
         
-        await prisma.$executeRawUnsafe(
-          `UPDATE "Book" SET title = ?, caption = ?, details = ?, rating = ?, image = ?, updatedAt = ? WHERE id = ?`,
-          bookTitle, bookCaption, bookDetails, bookRating, base64Image, updatedAt, req.params.id
-        );
+        await prisma.book.update({
+          where: { id: req.params.id },
+          data: {
+            title: bookTitle,
+            caption: bookCaption,
+            details: bookDetails,
+            rating: bookRating,
+            image: base64Image,
+            updatedAt
+          }
+        });
 
         const updatedBook = await getBookByIdRaw(req.params.id);
         return res.json(updatedBook);
@@ -315,10 +330,17 @@ router.put("/:id", protectRoute, upload.single("image"), async (req, res) => {
         async (error, result) => {
           if (error) return res.status(500).json({ message: error.message });
           
-          await prisma.$executeRawUnsafe(
-            `UPDATE "Book" SET title = ?, caption = ?, details = ?, rating = ?, image = ?, updatedAt = ? WHERE id = ?`,
-            bookTitle, bookCaption, bookDetails, bookRating, result.secure_url, updatedAt, req.params.id
-          );
+          await prisma.book.update({
+            where: { id: req.params.id },
+            data: {
+              title: bookTitle,
+              caption: bookCaption,
+              details: bookDetails,
+              rating: bookRating,
+              image: result.secure_url,
+              updatedAt
+            }
+          });
 
           const updatedBook = await getBookByIdRaw(req.params.id);
           res.json(updatedBook);
@@ -326,10 +348,16 @@ router.put("/:id", protectRoute, upload.single("image"), async (req, res) => {
       );
       uploadResponse.end(file.buffer);
     } else {
-      await prisma.$executeRawUnsafe(
-        `UPDATE "Book" SET title = ?, caption = ?, details = ?, rating = ?, updatedAt = ? WHERE id = ?`,
-        bookTitle, bookCaption, bookDetails, bookRating, updatedAt, req.params.id
-      );
+      await prisma.book.update({
+        where: { id: req.params.id },
+        data: {
+          title: bookTitle,
+          caption: bookCaption,
+          details: bookDetails,
+          rating: bookRating,
+          updatedAt
+        }
+      });
 
       const updatedBook = await getBookByIdRaw(req.params.id);
       res.json(updatedBook);
@@ -339,4 +367,5 @@ router.put("/:id", protectRoute, upload.single("image"), async (req, res) => {
     res.status(500).json({ message: "Internal server error" });
   }
 });
+
 export default router;

@@ -6,6 +6,7 @@
   "scripts": {
     "predev": "node scripts/update-ip.js",
     "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
     "postinstall": "prisma generate"
   },
   "devDependencies": {

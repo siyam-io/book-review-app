@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"npm run dev --prefix backend\" \"npm run start --prefix mobile\""
+    "dev": "concurrently \"npm run dev --prefix backend-sql\" \"npm run start --prefix mobile\""
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

@@ -25,12 +25,16 @@ app.use("/api/books", bookRoutes);
 app.use("/api/likes", likeRoutes);
 app.use("/api/comments", commentRoutes);
 
-app.listen(PORT, async () => {
-  console.log(`SQL Server running on ${PORT}`);
-  try {
-    await prisma.$connect();
-    console.log("Database is connected via Prisma");
-  } catch (error) {
-    console.error("Database connection failed:", error);
-  }
-});
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, async () => {
+    console.log(`SQL Server running on ${PORT}`);
+    try {
+      await prisma.$connect();
+      console.log("Database is connected via Prisma");
+    } catch (error) {
+      console.error("Database connection failed:", error);
+    }
+  });
+}
+
+export default app;

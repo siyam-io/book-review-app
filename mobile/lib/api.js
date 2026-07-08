@@ -1,8 +1,20 @@
 import axios from "axios";
 import { useAuthStore } from "../store/authStore.js";
 
+import { Platform } from "react-native";
+
+let baseURL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:5001/api";
+
+if (Platform.OS === "android") {
+  if (baseURL.includes("localhost")) {
+    baseURL = baseURL.replace("localhost", "10.0.2.2");
+  } else if (baseURL.includes("127.0.0.1")) {
+    baseURL = baseURL.replace("127.0.0.1", "10.0.2.2");
+  }
+}
+
 export const api = axios.create({
-  baseURL: process.env.EXPO_PUBLIC_API_URL,
+  baseURL: baseURL,
   headers: {
     "Content-Type": "application/json",
   },

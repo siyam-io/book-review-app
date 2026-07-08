@@ -4,9 +4,25 @@ import { join } from 'path';
 
 function getLocalIp() {
   const nets = networkInterfaces();
+  // First, try to find a 192.168.x.x address, ignoring virtual/warp adapters
   for (const name of Object.keys(nets)) {
+    if (name.toLowerCase().includes('warp') || name.toLowerCase().includes('cloudflare') || name.toLowerCase().includes('virtual')) {
+      continue;
+    }
     for (const net of nets[name]) {
-      // Skip internal and non-IPv4 addresses
+      if (!net.internal && net.family === 'IPv4') {
+        if (net.address.startsWith('192.168.') || net.address.startsWith('10.')) {
+          return net.address;
+        }
+      }
+    }
+  }
+  // Fallback to any non-internal IPv4 excluding warp/virtual adapters
+  for (const name of Object.keys(nets)) {
+    if (name.toLowerCase().includes('warp') || name.toLowerCase().includes('cloudflare') || name.toLowerCase().includes('virtual')) {
+      continue;
+    }
+    for (const net of nets[name]) {
       if (!net.internal && net.family === 'IPv4') {
         return net.address;
       }
@@ -37,12 +53,18 @@ const updateEnvFile = (filePath, ip) => {
       let mobileContent = readFileSync(mobileEnvPath, 'utf8');
       const mobileUrl = `http://${ip}:${port}/api`;
       if (mobileContent.includes('EXPO_PUBLIC_API_URL=')) {
-        mobileContent = mobileContent.replace(/EXPO_PUBLIC_API_URL=.*/g, `EXPO_PUBLIC_API_URL=${mobileUrl}`);
+        if (mobileContent.includes('10.0.2.2') || mobileContent.includes('localhost') || mobileContent.includes('127.0.0.1')) {
+          console.log('Preserving custom EXPO_PUBLIC_API_URL in mobile/.env');
+        } else {
+          mobileContent = mobileContent.replace(/EXPO_PUBLIC_API_URL=.*/g, `EXPO_PUBLIC_API_URL=${mobileUrl}`);
+          writeFileSync(mobileEnvPath, mobileContent);
+          console.log(`Updated EXPO_PUBLIC_API_URL to ${mobileUrl} in mobile/.env`);
+        }
       } else {
         mobileContent += `\nEXPO_PUBLIC_API_URL=${mobileUrl}`;
+        writeFileSync(mobileEnvPath, mobileContent);
+        console.log(`Updated EXPO_PUBLIC_API_URL to ${mobileUrl} in mobile/.env`);
       }
-      writeFileSync(mobileEnvPath, mobileContent);
-      console.log(`Updated EXPO_PUBLIC_API_URL to ${mobileUrl} in mobile/.env`);
     } catch (err) {
       console.log('Mobile .env not found or could not be updated.');
     }

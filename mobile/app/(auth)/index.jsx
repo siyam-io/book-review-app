@@ -97,7 +97,7 @@ const AuthIndex = () => {
         {!loginPage && (
           <View>
             <Text className="text-2xl font-bold text-center mb-6 text-green-700">
-              BookWorm
+              Book Review Hub
             </Text>
             <Text className="text-center mb-6 text-gray-600">
               Share your favourite reads
